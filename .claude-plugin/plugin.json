@@ -1,0 +1,6 @@
+{
+  "name": "lupin-title",
+  "version": "0.1.0",
+  "description": "Typewriter clack and a screen-centre card for each typed character; the sent prompt as a full-screen title card with a sting; a thinking-time card with excuses and music",
+  "author": { "name": "necobit" }
+}

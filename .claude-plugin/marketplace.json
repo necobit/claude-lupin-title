@@ -1,0 +1,5 @@
+{
+  "name": "claude-lupin-title",
+  "owner": { "name": "necobit" },
+  "plugins": [{ "name": "lupin-title", "source": "./" }]
+}
