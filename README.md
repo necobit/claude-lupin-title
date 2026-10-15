@@ -11,7 +11,8 @@ All sounds and music are original, synthesised by `helper/gen_sounds.py`.
 
 ## Requirements
 
-- macOS on Apple Silicon (the overlay is a small AppKit helper, `helper/lupin-overlay`)
+- macOS 13 Ventura or later, on Apple Silicon or Intel (the overlay is a small AppKit helper, `helper/lupin-overlay`, shipped as a universal binary)
+- Not supported on Windows or Linux: the mod then does nothing
 - A Claude Code build with mods (function hooks) support
 
 ## Install
@@ -48,6 +49,8 @@ To rebuild the helper or the sounds yourself:
 
 ```
 cd helper
-swiftc -O -o lupin-overlay LupinOverlay.swift
+swiftc -O -target arm64-apple-macos13 -o lupin-arm64 LupinOverlay.swift
+swiftc -O -target x86_64-apple-macos13 -o lupin-x86_64 LupinOverlay.swift
+lipo -create -output lupin-overlay lupin-arm64 lupin-x86_64
 python3 gen_sounds.py ../sounds
 ```

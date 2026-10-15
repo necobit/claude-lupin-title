@@ -52,7 +52,11 @@ async function launch($: EngineInterface) {
   await $.process
     .run(['/bin/sh', '-c', `nohup "$0/helper/lupin-overlay" "$0/sounds" >/dev/null 2>&1 &`, root])
     .catch(() => undefined)
-  await $.clock.sleep(400)
+  // Wait for it to answer: a first launch under Rosetta takes a few seconds.
+  for (let i = 0; i < 15; i++) {
+    await $.clock.sleep(200)
+    if (await $.http.fetch(`${BASE}/ping`).then(r => r.ok, () => false)) return
+  }
 }
 
 function shuffled<T>(items: readonly T[]): T[] {
