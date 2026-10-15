@@ -27,17 +27,20 @@ ${prompt.slice(0, 600)}`
 
 let sessionId: string | undefined
 let enabled = true
+// The terminal app this session runs in; the helper draws only while it is frontmost.
+let hostApp = ''
 let currentRequest = ''
 let thinking = false
 let haikuBusy = false
 
 async function post($: EngineInterface, path: string, body: string) {
   if (!enabled) return
+  const url = `${BASE}${path}${hostApp ? `?app=${encodeURIComponent(hostApp)}` : ''}`
   try {
-    await $.http.fetch(`${BASE}${path}`, { method: 'POST', body })
+    await $.http.fetch(url, { method: 'POST', body })
   } catch {
     await launch($)
-    await $.http.fetch(`${BASE}${path}`, { method: 'POST', body }).catch(() => undefined)
+    await $.http.fetch(url, { method: 'POST', body }).catch(() => undefined)
   }
 }
 
@@ -96,6 +99,7 @@ async function liveExcuse($: EngineInterface, tool: string, input: Record<string
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     sessionId = await $.session.id()
+    hostApp = (await $.env.get('__CFBundleIdentifier')) ?? ''
     enabled = (await $.store.get('enabled')) !== false
     await $.command.register({
       name: 'lupin',

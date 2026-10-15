@@ -3,7 +3,9 @@
 // character with a clack) and `POST /title` (the whole prompt, full screen,
 // with the sting), and `POST /think/{start,excuses,stop}` (a card counting
 // the turn's time and typing out excuses for it). Exits after 30 idle
-// minutes; the mod relaunches it.
+// minutes; the mod relaunches it. Each request may name the terminal app
+// it came from (`?app=<bundle id>`): nothing is drawn or played while that
+// app is not frontmost, and the thinking card waits hidden until it is.
 import AppKit
 import Network
 
@@ -39,6 +41,8 @@ final class Overlay {
     let groove = NSSound(contentsOf: soundDir.appendingPathComponent("groove.wav"), byReference: false)
     var music: NSSound?
     var musicFade: Timer?
+    var thinkApp: String?
+    var thinkAppeared = false
     var rotation: Timer?
     var lastNowAt = Date.distantPast
     var pendingNow: String?
@@ -99,6 +103,26 @@ final class Overlay {
         let mouse = NSEvent.mouseLocation
         let s = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         return s.frame
+    }
+
+    func isFront(_ app: String?) -> Bool {
+        guard let app, !app.isEmpty else { return true }
+        return NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app
+    }
+
+    /// The terminal came forward or went back: show or hide the thinking card with it.
+    func frontmostChanged() {
+        guard thinkOwner != nil, thinkAppeared else { return }
+        let w = think.0
+        if isFront(thinkApp) {
+            w.alphaValue = 1
+            w.orderFrontRegardless()
+            music?.resume()
+        } else {
+            typing?.cancel()
+            w.orderOut(nil)
+            music?.pause()
+        }
     }
 
     func play(_ s: NSSound?, volume: Float = 1) {
@@ -180,10 +204,11 @@ final class Overlay {
         return String(format: "%@ %02d:%02d", prefix, t / 60, t % 60)
     }
 
-    func thinkBegin(_ id: String, _ list: [String]) {
+    func thinkBegin(_ id: String, _ list: [String], app: String?) {
         lastActivity = Date()
         thinkEnd(final: false)
         thinkOwner = id
+        thinkApp = app
         thinkStart = Date()
         excuses = list
         excuseIndex = 0
@@ -205,6 +230,7 @@ final class Overlay {
         excuse.font = font(40)
         excuse.preferredMaxLayoutWidth = width * 0.9
         excuse.stringValue = ""
+        thinkAppeared = true
         w.alphaValue = 1
         w.orderFrontRegardless()
         thinkTimers.append(Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
@@ -213,6 +239,7 @@ final class Overlay {
         startMusic()
         if let now = pendingNow { pendingNow = nil; showNow(now) } else { nextExcuse() }
         restartRotation()
+        frontmostChanged()
     }
 
     func restartRotation() {
@@ -254,7 +281,7 @@ final class Overlay {
         label.stringValue = shown
         guard let c = rest.first else { return }
         let step = DispatchWorkItem {
-            if !c.isWhitespace { self.play(self.clacks.randomElement(), volume: 0.6) }
+            if !c.isWhitespace && label.window?.isVisible == true { self.play(self.clacks.randomElement(), volume: 0.6) }
             self.typeOut(Array(rest.dropFirst()), into: label, shown: shown + String(c))
         }
         typing = step
@@ -291,6 +318,7 @@ final class Overlay {
         thinkTimers.forEach { $0.invalidate() }
         thinkTimers.removeAll()
         rotation?.invalidate()
+        thinkAppeared = false
         pendingNowShow?.cancel()
         pendingNowShow = nil
         pendingNow = nil
@@ -339,19 +367,26 @@ func handle(_ conn: NWConnection, _ buffer: Data = Data()) {
             .flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
         let bodyData = buf[sep.upperBound...]
         if bodyData.count < length && !done && err == nil { handle(conn, buf); return }
-        let path = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+        let target = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+        let parts = target.split(separator: "?", maxSplits: 1).map(String.init)
+        let path = parts.first ?? "/"
+        let app = parts.count > 1
+            ? parts[1].split(separator: "&").map(String.init)
+                .first { $0.hasPrefix("app=") }
+                .map { String($0.dropFirst(4)).removingPercentEncoding ?? "" }
+            : nil
         let text = String(decoding: bodyData, as: UTF8.self)
         DispatchQueue.main.async {
             switch path {
-            case "/char": overlay.type(text)
-            case "/title": overlay.showTitle(text)
+            case "/char": if overlay.isFront(app) { overlay.type(text) }
+            case "/title": if overlay.isFront(app) { overlay.showTitle(text) }
             case "/quit": DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { exit(0) }
             case "/think/start", "/think/excuses", "/think/stop", "/think/now":
                 let msg = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
                 let id = msg["id"] as? String ?? ""
                 let list = (msg["excuses"] as? [String] ?? []).filter { !$0.isEmpty }
                 if path == "/think/start" {
-                    overlay.thinkBegin(id, list)
+                    overlay.thinkBegin(id, list, app: app)
                 } else if id == overlay.thinkOwner {
                     if path == "/think/stop" { overlay.thinkEnd(final: true) }
                     else if path == "/think/now", let line = msg["excuse"] as? String, !line.isEmpty { overlay.excuseNow(line) }
@@ -381,6 +416,10 @@ Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
     if Date().timeIntervalSince(overlay.lastActivity) > idleLimit { exit(0) }
 }
 
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-app.run()
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+) { _ in overlay.frontmostChanged() }
+
+let application = NSApplication.shared
+application.setActivationPolicy(.accessory)
+application.run()
